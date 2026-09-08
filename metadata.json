@@ -1,0 +1,6 @@
+{
+  "name": "ПМР Поручения & Мастера",
+  "description": "P2P-сервис локальных поручений, экспресс-доставки и услуг мастеров в городах Приднестровья с картой, чеками и админ-панелью.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
