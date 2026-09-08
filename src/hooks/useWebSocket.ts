@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Order, ChatMessage } from '../types';
+import { Order, ChatMessage, AppNotification } from '../types';
 import { getAuthToken } from '../lib/api';
 
 interface WebSocketMessage {
@@ -13,6 +13,7 @@ interface UseWebSocketOptions {
   onMessage?: (message: ChatMessage) => void;
   onWalletUpdated?: (data: { userId: string; balance: number; reservedBalance: number }) => void;
   onVerificationReviewed?: (verification: any) => void;
+  onNotification?: (notification: AppNotification) => void;
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
@@ -84,6 +85,9 @@ export function useWebSocket(options: UseWebSocketOptions) {
               case 'verification_updated':
               case 'verification_reviewed':
                 options.onVerificationReviewed?.(payload);
+                break;
+              case 'notification':
+                options.onNotification?.(payload);
                 break;
               default:
                 break;

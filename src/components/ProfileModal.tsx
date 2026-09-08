@@ -17,9 +17,11 @@ import {
   TrendingUp,
   CreditCard,
   Building2,
-  RefreshCw
+  RefreshCw,
+  Radio,
+  MessageSquare
 } from 'lucide-react';
-import { User, WalletTransaction } from '../types';
+import { User, WalletTransaction, Review } from '../types';
 import { api } from '../lib/api';
 
 interface ProfileModalProps {
@@ -43,7 +45,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const [activeTab, setActiveTab] = useState<'profile' | 'wallet' | 'verification' | 'switch'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'wallet' | 'reviews' | 'verification' | 'switch'>('profile');
+
+  // Reviews state
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [isLoadingReviews, setIsLoadingReviews] = useState(false);
 
   // Phone auth state
   const [authPhone, setAuthPhone] = useState('+373 777 ');
@@ -89,9 +95,46 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     }
   };
 
+  // Load reviews for current user
+  const loadReviews = async () => {
+    try {
+      setIsLoadingReviews(true);
+      const revs = await api.getUserReviews(currentUser.id);
+      setReviews(revs);
+    } catch (e) {
+      console.error('Error fetching reviews:', e);
+    } finally {
+      setIsLoadingReviews(false);
+    }
+  };
+
   useEffect(() => {
     loadWallet();
+    loadReviews();
   }, [currentUser.id]);
+
+  // Toggle online / offline status
+  const handleToggleOnline = async () => {
+    const nextStatus = currentUser.is_online === false;
+    try {
+      setIsLoading(true);
+      setStatusMessage(null);
+      await api.updateOnlineStatus(nextStatus);
+      onUserUpdated({
+        ...currentUser,
+        is_online: nextStatus,
+      });
+      setStatusMessage(
+        nextStatus
+          ? 'Статус обновлен: Вы В СЕТИ и принимаете поручения на карте!'
+          : 'Статус обновлен: Вы НЕ В СЕТИ (режим паузы).'
+      );
+    } catch (err: any) {
+      setStatusMessage(err.message || 'Ошибка обновления статуса');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Handle SMS countdown
   useEffect(() => {
@@ -241,7 +284,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               <Smartphone className="w-3 h-3 text-slate-400" />
               <span>{currentUser.phone} (IDC ПМР)</span>
             </p>
-            <div className="flex items-center gap-2 mt-1 text-xs">
+            <div className="flex flex-wrap items-center gap-2 mt-1 text-xs">
               <span className="text-amber-500 font-bold flex items-center gap-0.5">
                 <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                 {currentUser.rating.toFixed(2)}
@@ -251,14 +294,36 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 Баланс: {wallet.balance} руб.
               </span>
             </div>
+
+            {/* Online / Offline Status Toggle */}
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleToggleOnline}
+                disabled={isLoading}
+                title="Переключить статус доступности для заказов"
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition border ${
+                  currentUser.is_online !== false
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                    : 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    currentUser.is_online !== false ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                  }`}
+                />
+                <span>{currentUser.is_online !== false ? 'В сети (принимаю заказы)' : 'Не в сети (пауза)'}</span>
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Tab Buttons */}
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl mb-4 text-xs font-bold">
+        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl mb-4 text-xs font-bold overflow-x-auto">
           <button
             onClick={() => setActiveTab('profile')}
-            className={`flex-1 py-1.5 rounded-xl transition ${
+            className={`flex-1 min-w-[70px] py-1.5 rounded-xl transition ${
               activeTab === 'profile' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500'
             }`}
           >
@@ -266,7 +331,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('wallet')}
-            className={`flex-1 py-1.5 rounded-xl transition flex items-center justify-center gap-1 ${
+            className={`flex-1 min-w-[75px] py-1.5 rounded-xl transition flex items-center justify-center gap-1 ${
               activeTab === 'wallet' ? 'bg-white text-emerald-700 shadow-2xs' : 'text-slate-500'
             }`}
           >
@@ -274,8 +339,17 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             <span>Кошелек</span>
           </button>
           <button
+            onClick={() => setActiveTab('reviews')}
+            className={`flex-1 min-w-[75px] py-1.5 rounded-xl transition flex items-center justify-center gap-1 ${
+              activeTab === 'reviews' ? 'bg-white text-amber-600 shadow-2xs' : 'text-slate-500'
+            }`}
+          >
+            <Star className="w-3.5 h-3.5" />
+            <span>Отзывы {reviews.length > 0 ? `(${reviews.length})` : ''}</span>
+          </button>
+          <button
             onClick={() => setActiveTab('verification')}
-            className={`flex-1 py-1.5 rounded-xl transition flex items-center justify-center gap-1 ${
+            className={`flex-1 min-w-[75px] py-1.5 rounded-xl transition flex items-center justify-center gap-1 ${
               activeTab === 'verification' ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-500'
             }`}
           >
@@ -285,11 +359,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           {isDemoMode && (
             <button
               onClick={() => setActiveTab('switch')}
-              className={`flex-1 py-1.5 rounded-xl transition ${
+              className={`flex-1 min-w-[70px] py-1.5 rounded-xl transition ${
                 activeTab === 'switch' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500'
               }`}
             >
-              Тест аккаунты
+              Тест
             </button>
           )}
         </div>
@@ -458,6 +532,117 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                         {tx.type === 'topup' || tx.type === 'payout' || tx.type === 'refund' ? '+' : '-'}
                         {tx.amount} руб.
                       </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB: REVIEWS & REPUTATION */}
+        {activeTab === 'reviews' && (
+          <div className="space-y-4">
+            {/* Rating summary banner */}
+            <div className="bg-gradient-to-br from-amber-50 to-orange-50/50 rounded-2xl p-4 border border-amber-200/60 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <Star className="w-5 h-5 fill-amber-400 text-amber-400" />
+                  <span className="text-xl font-extrabold text-slate-900">
+                    {currentUser.rating.toFixed(1)}
+                  </span>
+                  <span className="text-xs text-slate-500 font-semibold">/ 5.0</span>
+                </div>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Рейтинг формируется на основе честных отзывов реальных заказчиков
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-xs font-extrabold bg-amber-100 text-amber-900 px-2.5 py-1 rounded-full">
+                  {reviews.length} {reviews.length === 1 ? 'отзыв' : reviews.length > 1 && reviews.length < 5 ? 'отзыва' : 'отзывов'}
+                </span>
+              </div>
+            </div>
+
+            {/* Reviews list */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-slate-500" />
+                  Отзывы клиентов
+                </h4>
+                <button
+                  type="button"
+                  onClick={loadReviews}
+                  disabled={isLoadingReviews}
+                  className="text-[11px] text-emerald-700 hover:text-emerald-800 font-bold flex items-center gap-1"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isLoadingReviews ? 'animate-spin' : ''}`} />
+                  <span>Обновить</span>
+                </button>
+              </div>
+
+              {isLoadingReviews ? (
+                <div className="text-center py-8 text-xs text-slate-400 flex items-center justify-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin text-amber-500" />
+                  <span>Загрузка отзывов...</span>
+                </div>
+              ) : reviews.length === 0 ? (
+                <div className="text-center py-8 border border-dashed border-slate-200 rounded-2xl bg-slate-50 p-4">
+                  <Star className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-slate-700">Отзывов пока нет</p>
+                  <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">
+                    Выполняйте поручения в городах ПМР, чтобы клиенты оставляли оценки и комментарии о вашей работе.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                  {reviews.map((rev) => (
+                    <div
+                      key={rev.id}
+                      className="p-3 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <img
+                            src={rev.author_avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=60'}
+                            alt={rev.author_name}
+                            className="w-6 h-6 rounded-full object-cover border border-slate-200"
+                          />
+                          <span className="text-xs font-bold text-slate-800">
+                            {rev.author_name}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-0.5 text-amber-400">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <Star
+                              key={i}
+                              className={`w-3 h-3 ${
+                                i < rev.rating
+                                  ? 'fill-amber-400 text-amber-400'
+                                  : 'fill-slate-100 text-slate-200'
+                              }`}
+                            />
+                          ))}
+                          <span className="text-xs font-extrabold text-slate-700 ml-1">
+                            {rev.rating}
+                          </span>
+                        </div>
+                      </div>
+
+                      {rev.comment && (
+                        <p className="text-xs text-slate-600 leading-relaxed pl-8">
+                          "{rev.comment}"
+                        </p>
+                      )}
+
+                      <div className="text-[10px] text-slate-400 text-right">
+                        {new Date(rev.created_at).toLocaleDateString('ru-RU', {
+                          day: 'numeric',
+                          month: 'long',
+                          year: 'numeric',
+                        })}
+                      </div>
                     </div>
                   ))}
                 </div>

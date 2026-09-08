@@ -18,17 +18,22 @@ import {
   User as UserIcon,
   Sparkles,
   RefreshCw,
-  Ban
+  Ban,
+  RotateCcw,
+  FileText,
+  Printer
 } from 'lucide-react';
 import { Order, User, ChatMessage } from '../types';
 import { PMR_CATEGORY_NAMES } from '../data/pmrCities';
 import { api } from '../lib/api';
+import { ReceiptExportModal } from './ReceiptExportModal';
 
 interface OrderDetailModalProps {
   order: Order;
   currentUser: User;
   onClose: () => void;
   onOrderUpdated: (updated: Order) => void;
+  onRepeatOrder?: (order: Order) => void;
 }
 
 export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
@@ -36,13 +41,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   currentUser,
   onClose,
   onOrderUpdated,
+  onRepeatOrder,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessageText, setNewMessageText] = useState('');
   const [activeTab, setActiveTab] = useState<'info' | 'chat'>('info');
 
-  // Receipt upload state
+  // Receipt modal state
   const [showReceiptUpload, setShowReceiptUpload] = useState(false);
+  const [showReceiptExport, setShowReceiptExport] = useState(false);
   const [receiptTotal, setReceiptTotal] = useState(order.budget.toString());
   const [receiptPhotoUrl, setReceiptPhotoUrl] = useState(
     'https://images.unsplash.com/photo-1554415707-9e49016a3e1f?w=600&auto=format&fit=crop&q=80'
@@ -240,44 +247,71 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
   const isCourier = currentUser.id === order.courier_id;
   const catMeta = PMR_CATEGORY_NAMES[order.category] || PMR_CATEGORY_NAMES.products;
 
-  // Stepper calculations
-  const steps = [
-    { label: 'Создан', done: true },
-    { label: 'В работе', done: order.status !== 'created' && order.status !== 'canceled' },
+  // Status timeline steps according to prompt
+  // 1. Заказ создан -> 2. Исполнитель найден -> 3. Выполняется -> 4. Чек загружен -> 5. Завершён
+  const timelineSteps = [
     {
-      label: 'Чек загружен',
-      done: order.status === 'receipt_uploaded' || order.status === 'completed',
+      id: 1,
+      label: 'Заказ создан',
+      isCompleted: true,
+      isActive: order.status === 'created',
     },
-    { label: 'Выполнен', done: order.status === 'completed' },
+    {
+      id: 2,
+      label: 'Исполнитель найден',
+      isCompleted: order.status !== 'created' && order.status !== 'canceled',
+      isActive: order.status === 'accepted' && !order.receipt,
+    },
+    {
+      id: 3,
+      label: 'Выполняется',
+      isCompleted: order.status === 'receipt_uploaded' || order.status === 'completed',
+      isActive: order.status === 'accepted',
+    },
+    {
+      id: 4,
+      label: 'Чек загружен',
+      isCompleted: order.status === 'receipt_uploaded' || order.status === 'completed',
+      isActive: order.status === 'receipt_uploaded',
+    },
+    {
+      id: 5,
+      label: 'Завершён',
+      isCompleted: order.status === 'completed',
+      isActive: order.status === 'completed',
+    },
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/65 backdrop-blur-xs overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
       <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 relative my-auto animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
           <div className="flex items-center gap-2.5">
-            <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${catMeta.badge}`}>
+            <span className={`px-2.5 py-1 rounded-xl text-xs font-bold border ${catMeta.badge}`}>
               {catMeta.label}
             </span>
-            <span className="text-xs text-slate-500 font-medium">{order.city}</span>
+            <span className="text-xs text-slate-500 font-bold flex items-center gap-1">
+              <MapPin className="w-3.5 h-3.5 text-slate-400" />
+              г. {order.city}
+            </span>
             {order.status === 'disputed' && (
-              <span className="bg-rose-100 text-rose-800 text-xs font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" /> На споре
+              <span className="bg-rose-100 text-rose-800 text-xs font-extrabold px-2 py-0.5 rounded-lg flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3 text-rose-600" /> На споре
               </span>
             )}
             {order.status === 'canceled' && (
-              <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+              <span className="bg-slate-100 text-slate-600 text-xs font-extrabold px-2 py-0.5 rounded-lg flex items-center gap-1">
                 <Ban className="w-3 h-3" /> Отменен
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="text-right mr-2">
-              <span className="text-xs text-slate-400 block font-medium">Эскроу бюджет</span>
-              <span className="text-base font-extrabold text-slate-900 leading-none">
-                {order.budget} <span className="text-xs text-emerald-600">руб. ПМР</span>
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Бюджет</span>
+              <span className="text-base sm:text-lg font-extrabold text-slate-900 leading-none">
+                {order.budget} <span className="text-xs text-amber-600 font-bold">₽ ПМР</span>
               </span>
             </div>
             <button
@@ -293,9 +327,9 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
         <div className="flex border-b border-slate-200 bg-white">
           <button
             onClick={() => setActiveTab('info')}
-            className={`flex-1 py-2.5 text-xs font-bold transition flex items-center justify-center gap-2 border-b-2 ${
+            className={`flex-1 py-3 text-xs font-bold transition flex items-center justify-center gap-2 border-b-2 ${
               activeTab === 'info'
-                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/20'
+                ? 'border-amber-500 text-amber-700 bg-amber-50/20'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
@@ -304,19 +338,24 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('chat')}
-            className={`flex-1 py-2.5 text-xs font-bold transition flex items-center justify-center gap-2 border-b-2 relative ${
+            className={`flex-1 py-3 text-xs font-bold transition flex items-center justify-center gap-2 border-b-2 relative ${
               activeTab === 'chat'
-                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/20'
+                ? 'border-amber-500 text-amber-700 bg-amber-50/20'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <MessageSquare className="w-4 h-4" />
-            <span>Чат с участником ({messages.length})</span>
+            <span>Чат с участником</span>
+            {messages.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                {messages.length}
+              </span>
+            )}
           </button>
         </div>
 
         {error && (
-          <div className="mx-4 mt-3 p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700">
+          <div className="mx-4 mt-3 p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
             {error}
           </div>
         )}
@@ -325,155 +364,274 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 sm:p-5">
           {activeTab === 'info' ? (
             <div className="space-y-4">
-              {/* Stepper */}
-              <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200/80">
-                <div className="flex items-center justify-between relative">
-                  {steps.map((step, idx) => (
-                    <div key={step.label} className="flex flex-col items-center flex-1 z-10">
-                      <div
-                        className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition ${
-                          step.done
-                            ? 'bg-emerald-600 text-white shadow-xs'
-                            : 'bg-slate-200 text-slate-500'
-                        }`}
-                      >
-                        {step.done ? <CheckCircle className="w-4 h-4" /> : idx + 1}
+              {/* Status Timeline as requested */}
+              <div className="bg-slate-50 rounded-2xl p-3.5 sm:p-4 border border-slate-200">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+                    Статус выполнения:
+                  </h4>
+                  <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                    {order.status === 'created'
+                      ? 'Поиск исполнителя'
+                      : order.status === 'accepted'
+                      ? 'В работе'
+                      : order.status === 'receipt_uploaded'
+                      ? 'Ожидает подтверждения'
+                      : order.status === 'completed'
+                      ? 'Завершён успешно'
+                      : 'Арбитраж'}
+                  </span>
+                </div>
+
+                <div className="relative flex items-center justify-between">
+                  <div className="absolute top-3.5 left-4 right-4 h-0.5 bg-slate-200 -z-0" />
+                  {timelineSteps.map((step) => {
+                    return (
+                      <div key={step.id} className="flex flex-col items-center flex-1 z-10">
+                        <div
+                          className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-200 ${
+                            step.isCompleted
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : step.isActive
+                              ? 'bg-amber-500 text-white ring-4 ring-amber-100 animate-pulse'
+                              : 'bg-white border-2 border-slate-300 text-slate-400'
+                          }`}
+                        >
+                          {step.isCompleted ? (
+                            <CheckCircle className="w-4 h-4" />
+                          ) : step.isActive ? (
+                            <span className="w-2 h-2 rounded-full bg-white" />
+                          ) : (
+                            <span className="text-[10px]">{step.id}</span>
+                          )}
+                        </div>
+                        <span
+                          className={`text-[10px] sm:text-[11px] font-bold mt-1.5 text-center leading-tight ${
+                            step.isCompleted
+                              ? 'text-emerald-800'
+                              : step.isActive
+                              ? 'text-amber-800 font-extrabold'
+                              : 'text-slate-400'
+                          }`}
+                        >
+                          {step.label}
+                        </span>
                       </div>
-                      <span className="text-[11px] font-medium text-slate-600 mt-1 text-center leading-tight">
-                        {step.label}
-                      </span>
-                    </div>
-                  ))}
-                  <div className="absolute top-3 left-6 right-6 h-0.5 bg-slate-200 -z-0" />
+                    );
+                  })}
                 </div>
               </div>
 
               {/* Escrow Financial Guarantee Box */}
-              <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="bg-emerald-50/70 border border-emerald-200/90 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2.5">
-                  <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                    <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                  </div>
                   <div>
-                    <h4 className="font-bold text-emerald-950">Безопасная сделка (Эскроу ПМР)</h4>
+                    <h4 className="font-extrabold text-emerald-950">
+                      Безопасная сделка (PMR Escrow)
+                    </h4>
                     <p className="text-emerald-800 text-[11px]">
-                      Бюджет заморожен на счете до подтверждения выполнения заказчиком
+                      Деньги заморожены на счете и переводятся курьеру только после проверки чека
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 text-[11px] font-semibold text-emerald-900 shrink-0 bg-white/80 px-3 py-1.5 rounded-xl border border-emerald-200/80">
-                  <span>Выплата: {Math.round(order.budget * 0.9)} руб.</span>
+                <div className="flex items-center gap-2.5 text-[11px] font-bold text-emerald-900 shrink-0 bg-white/90 px-3 py-1.5 rounded-xl border border-emerald-200">
+                  <span>Выплата: {Math.round(order.budget * 0.9)} ₽</span>
                   <span className="text-slate-300">|</span>
-                  <span className="text-slate-500">Комиссия (10%): {Math.round(order.budget * 0.1)} руб.</span>
+                  <span className="text-slate-500">Комиссия (10%): {Math.round(order.budget * 0.1)} ₽</span>
                 </div>
               </div>
 
               {/* Title & Description */}
-              <div>
-                <h3 className="font-extrabold text-base text-slate-900 mb-1">
+              <div className="bg-white rounded-2xl p-4 border border-slate-200">
+                <h3 className="font-extrabold text-base text-slate-900 mb-1.5">
                   {order.title}
                 </h3>
-                <p className="text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line bg-slate-50/80 p-3 rounded-xl border border-slate-100">
+                <p className="text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line bg-slate-50 p-3 rounded-xl border border-slate-100">
                   {order.description}
                 </p>
-              </div>
 
-              {/* Address / Location */}
-              <div className="flex items-start gap-2 bg-emerald-50/50 p-3 rounded-xl border border-emerald-100 text-xs text-emerald-950">
-                <MapPin className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold block">Адрес / Ориентир:</span>
-                  <span>{order.address} ({order.city})</span>
-                </div>
-              </div>
-
-              {/* Participants info: Client & Courier */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Client */}
-                <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center gap-3">
-                  <img
-                    src={order.client_avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100'}
-                    alt="Заказчик"
-                    className="w-10 h-10 rounded-full object-cover border border-slate-200"
-                  />
-                  <div className="text-xs">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Заказчик</span>
-                    <h4 className="font-bold text-slate-900 leading-tight">{order.client_name}</h4>
-                    <span className="text-slate-500">{order.client_phone}</span>
+                {/* Address */}
+                <div className="flex items-start gap-2 text-xs text-slate-800 mt-3 pt-2 border-t border-slate-100">
+                  <MapPin className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold">Адрес / Ориентир: </span>
+                    <span>{order.address} ({order.city})</span>
                   </div>
                 </div>
+              </div>
 
-                {/* Courier */}
-                <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center gap-3">
+              {/* Participants info: Courier Card & Client Card */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Courier Card as requested */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col justify-between shadow-2xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] uppercase font-extrabold text-emerald-700 tracking-wider">
+                      Исполнитель
+                    </span>
+                    {order.courier_id && (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-0.5">
+                        <CheckCircle className="w-3 h-3 text-emerald-600" />
+                        Личность подтверждена
+                      </span>
+                    )}
+                  </div>
+
                   {order.courier_id ? (
-                    <>
-                      <img
-                        src={order.courier_avatar || 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100'}
-                        alt="Исполнитель"
-                        className="w-10 h-10 rounded-full object-cover border border-slate-200"
-                      />
-                      <div className="text-xs">
-                        <span className="text-[10px] uppercase font-bold text-emerald-600">Исполнитель</span>
-                        <h4 className="font-bold text-slate-900 leading-tight">{order.courier_name}</h4>
-                        <span className="text-slate-500">{order.courier_phone}</span>
+                    <div className="flex items-center gap-3">
+                      <div className="relative shrink-0">
+                        <img
+                          src={order.courier_avatar || 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100'}
+                          alt="Исполнитель"
+                          className="w-12 h-12 rounded-2xl object-cover border border-slate-200 shadow-2xs"
+                        />
+                        <span
+                          className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${
+                            order.courier_is_online !== false ? 'bg-emerald-500' : 'bg-slate-400'
+                          }`}
+                        />
                       </div>
-                    </>
+                      <div className="text-xs flex-1 min-w-0">
+                        <h4 className="font-extrabold text-slate-900 leading-tight truncate">
+                          {order.courier_name}
+                        </h4>
+                        <div className="flex items-center gap-1.5 text-amber-600 font-bold text-[11px] mt-0.5">
+                          <Star className="w-3.5 h-3.5 fill-amber-400" />
+                          <span>4.9</span>
+                          <span className="text-slate-400 font-normal">· 127 заказов</span>
+                        </div>
+                        <span className="text-slate-500 text-[11px] block mt-0.5">{order.courier_phone}</span>
+                      </div>
+                    </div>
                   ) : (
-                    <div className="flex items-center gap-2.5 text-slate-400 text-xs py-1">
+                    <div className="flex items-center gap-2.5 text-slate-400 text-xs py-2">
                       <UserIcon className="w-6 h-6 stroke-1" />
                       <span>Исполнитель еще не назначен</span>
                     </div>
                   )}
+
+                  {order.courier_id && (
+                    <button
+                      onClick={() => setActiveTab('chat')}
+                      className="mt-3 w-full bg-slate-100 hover:bg-slate-200/80 text-slate-800 text-xs font-bold py-1.5 px-3 rounded-xl transition flex items-center justify-center gap-1.5"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-slate-600" />
+                      <span>Написать исполнителю</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Client Card */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col justify-between shadow-2xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">
+                      Заказчик
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                      г. {order.city}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="relative shrink-0">
+                      <img
+                        src={order.client_avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100'}
+                        alt="Заказчик"
+                        className="w-12 h-12 rounded-2xl object-cover border border-slate-200"
+                      />
+                      <span
+                        className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${
+                          order.client_is_online !== false ? 'bg-emerald-500' : 'bg-slate-400'
+                        }`}
+                      />
+                    </div>
+                    <div className="text-xs flex-1 min-w-0">
+                      <h4 className="font-extrabold text-slate-900 leading-tight truncate">
+                        {order.client_name}
+                      </h4>
+                      <span className="text-slate-500 text-[11px] block mt-0.5">{order.client_phone}</span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setActiveTab('chat')}
+                    className="mt-3 w-full bg-slate-100 hover:bg-slate-200/80 text-slate-800 text-xs font-bold py-1.5 px-3 rounded-xl transition flex items-center justify-center gap-1.5"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Написать заказчику</span>
+                  </button>
                 </div>
               </div>
 
-              {/* RECEIPT SECTION */}
+              {/* RECEIPT SECTION WITH DETAILED BREAKDOWN */}
               <div className="border border-slate-200 rounded-2xl p-4 bg-white shadow-xs">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <ReceiptIcon className="w-5 h-5 text-emerald-600" />
                     <div>
-                      <h4 className="font-bold text-xs sm:text-sm text-slate-900">
+                      <h4 className="font-extrabold text-xs sm:text-sm text-slate-900">
                         Контроль расходов по чеку
                       </h4>
                       <p className="text-[11px] text-slate-500">
-                        Фотофиксация чека из магазина или аптеки
+                        Фотофиксация и финансовая сверка чека
                       </p>
                     </div>
                   </div>
 
                   {order.receipt && (
-                    <span className="text-xs font-extrabold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-lg">
-                      Сумма: {order.receipt.total_sum} руб.
+                    <span className="text-xs font-extrabold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-xl">
+                      Чек: {order.receipt.total_sum} ₽
                     </span>
                   )}
                 </div>
 
                 {order.receipt ? (
                   <div className="space-y-3">
-                    <div className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 max-h-56 flex items-center justify-center">
+                    {/* Big Photo Preview */}
+                    <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 max-h-64 flex items-center justify-center shadow-inner">
                       <img
                         src={order.receipt.photo_url}
                         alt="Чек"
-                        className="w-full h-full object-contain max-h-56"
+                        className="w-full h-full object-contain max-h-64"
                       />
                       <a
                         href={order.receipt.photo_url}
                         target="_blank"
                         rel="noreferrer"
-                        className="absolute bottom-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white text-[11px] px-2.5 py-1 rounded-lg transition"
+                        className="absolute bottom-2 right-2 bg-slate-900/85 hover:bg-slate-900 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl transition shadow-md"
                       >
-                        Открыть фото ↗
+                        Открыть оригинал ↗
                       </a>
                     </div>
 
-                    <div className="bg-slate-50 p-2.5 rounded-xl text-xs flex items-center justify-between">
-                      <span className="text-slate-600">Бюджет заказчика:</span>
-                      <span className="font-bold text-slate-800">{order.budget} руб. ПМР</span>
-                    </div>
-                    <div className="bg-emerald-50/80 p-2.5 rounded-xl text-xs flex items-center justify-between border border-emerald-200">
-                      <span className="font-semibold text-emerald-900">Итоговая сумма по чеку:</span>
-                      <span className="font-extrabold text-emerald-700 text-sm">{order.receipt.total_sum} руб. ПМР</span>
+                    {/* Financial Breakdown as requested */}
+                    <div className="bg-slate-50 rounded-2xl p-3 border border-slate-200 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Сумма покупки по чеку:</span>
+                        <span className="font-bold text-slate-900">{order.receipt.total_sum} ₽</span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span>Вознаграждение курьера:</span>
+                        <span className="font-bold text-slate-900">{Math.round(order.budget * 0.9)} ₽</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-200 text-emerald-900 font-extrabold text-sm">
+                        <span>Итоговая сумма сделки:</span>
+                        <span>{order.receipt.total_sum + Math.round(order.budget * 0.9)} ₽</span>
+                      </div>
                     </div>
                   </div>
+                ) : (
+                  <div className="text-center py-6 px-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <ReceiptIcon className="w-8 h-8 text-slate-300 mx-auto mb-1.5" />
+                    <p className="text-xs font-bold text-slate-700">Чек пока не загружен</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Исполнитель загрузит фото чека после совершения покупки
+                    </p>
+                  </div>
+                )}
+              </div>
                 ) : (
                   <div className="text-center py-6 px-4 bg-slate-50 rounded-xl border border-dashed border-slate-200">
                     <ReceiptIcon className="w-8 h-8 text-slate-300 mx-auto mb-1" />
@@ -653,9 +811,54 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
           )}
 
           {order.status === 'completed' && (
-            <div className="w-full text-center py-1 text-xs font-semibold text-emerald-700 flex items-center justify-center gap-1.5">
-              <CheckCircle className="w-4 h-4 text-emerald-600" />
-              <span>Заказ успешно завершен</span>
+            <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-2.5 py-1">
+              <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5">
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
+                <span>Заказ успешно завершен</span>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowReceiptExport(true)}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 px-3 rounded-xl transition text-xs flex items-center gap-1.5"
+                >
+                  <FileText className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Квитанция</span>
+                </button>
+
+                {onRepeatOrder && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onRepeatOrder(order);
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3.5 rounded-xl transition text-xs flex items-center gap-1.5 shadow-2xs"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Повторить заказ</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Repeat option for canceled orders as well */}
+          {order.status === 'canceled' && onRepeatOrder && (
+            <div className="w-full flex items-center justify-between gap-2 py-1">
+              <span className="text-xs text-slate-400">Заказ был отменен</span>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onRepeatOrder(order);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3.5 rounded-xl transition text-xs flex items-center gap-1.5 shadow-2xs"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Повторить заказ</span>
+              </button>
             </div>
           )}
         </div>
@@ -924,6 +1127,12 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({
             </div>
           </div>
         )}
+        {/* SUBMODAL 4: Receipt Export & Print Modal */}
+        <ReceiptExportModal
+          isOpen={showReceiptExport}
+          onClose={() => setShowReceiptExport(false)}
+          order={order}
+        />
       </div>
     </div>
   );

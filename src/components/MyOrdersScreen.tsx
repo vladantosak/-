@@ -11,16 +11,20 @@ import {
   ShieldCheck,
   MapPin,
   FileCheck,
-  DollarSign
+  DollarSign,
+  RotateCcw,
+  FileText
 } from 'lucide-react';
 import { Order, User, OrderStatus } from '../types';
 import { PMR_CATEGORY_NAMES } from '../data/pmrCities';
+import { ReceiptExportModal } from './ReceiptExportModal';
 
 interface MyOrdersScreenProps {
   orders: Order[];
   currentUser: User;
   onSelectOrder: (order: Order) => void;
   onOpenWallet: () => void;
+  onRepeatOrder?: (order: Order) => void;
 }
 
 export const MyOrdersScreen: React.FC<MyOrdersScreenProps> = ({
@@ -28,9 +32,11 @@ export const MyOrdersScreen: React.FC<MyOrdersScreenProps> = ({
   currentUser,
   onSelectOrder,
   onOpenWallet,
+  onRepeatOrder,
 }) => {
   const [roleFilter, setRoleFilter] = useState<'all' | 'as_client' | 'as_courier'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'completed' | 'disputed'>('all');
+  const [receiptModalOrder, setReceiptModalOrder] = useState<Order | null>(null);
 
   // Filter orders relevant to current user
   const userOrders = orders.filter((o) => {
@@ -315,6 +321,37 @@ export const MyOrdersScreen: React.FC<MyOrdersScreenProps> = ({
                       <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span className="truncate">{order.address}</span>
                     </div>
+
+                    {/* Quick Action buttons for completed / canceled orders */}
+                    <div className="flex items-center gap-2 pt-1">
+                      {(order.status === 'completed' || order.receipt) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setReceiptModalOrder(order);
+                          }}
+                          className="text-[11px] font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
+                        >
+                          <FileText className="w-3 h-3 text-slate-500" />
+                          <span>Чек</span>
+                        </button>
+                      )}
+
+                      {isClient && (order.status === 'completed' || order.status === 'canceled') && onRepeatOrder && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRepeatOrder(order);
+                          }}
+                          className="text-[11px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Повторить заказ</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Right side: Budget & Action */}
@@ -340,6 +377,15 @@ export const MyOrdersScreen: React.FC<MyOrdersScreenProps> = ({
           </div>
         )}
       </div>
+
+      {/* Receipt Export Modal */}
+      {receiptModalOrder && (
+        <ReceiptExportModal
+          isOpen={true}
+          onClose={() => setReceiptModalOrder(null)}
+          order={receiptModalOrder}
+        />
+      )}
     </div>
   );
 };

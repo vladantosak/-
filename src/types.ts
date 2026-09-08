@@ -41,10 +41,12 @@ export interface Order {
   client_name: string;
   client_phone: string;
   client_avatar?: string;
+  client_is_online?: boolean;
   courier_id?: string | null;
   courier_name?: string | null;
   courier_phone?: string | null;
   courier_avatar?: string | null;
+  courier_is_online?: boolean | null;
   category: OrderCategory;
   title: string;
   description: string;

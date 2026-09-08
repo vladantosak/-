@@ -1,5 +1,5 @@
 import { db } from './index.ts';
-import { users, orders, receipts, verifications, messages, transactions } from './schema.ts';
+import { users, orders, receipts, verifications, messages, transactions, notifications, reviews } from './schema.ts';
 import { count } from 'drizzle-orm';
 
 export async function seedDatabase() {
@@ -253,6 +253,92 @@ export async function seedDatabase() {
         amount: 220.0,
         description: 'Резервирование средств в эскроу под заказ в Аптеке Вивафарм',
         createdAt: new Date(Date.now() - 1000 * 60 * 90),
+      },
+    ]);
+
+    // 7. Seed Initial Notifications
+    await db.insert(notifications).values([
+      {
+        id: 'notif-1',
+        userId: 'u-1',
+        type: 'order_status_changed',
+        title: 'Заказ #ord-105 успешно завершен!',
+        body: 'Курьер Максим Шестаков завершил заказ «Купить свежий судак на Зеленом Рынке». Сумма 195 руб. ПМР переведена исполнителю.',
+        payload: JSON.stringify({ order_id: 'ord-105' }),
+        isRead: true,
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5),
+      },
+      {
+        id: 'notif-2',
+        userId: 'u-1',
+        type: 'order_created_nearby',
+        title: 'Новое поручение рядом: Тирасполь',
+        body: 'В центре Тирасполя создан заказ: "Купить продукты в Шериф-15". Бюджет: 180 руб. ПМР.',
+        payload: JSON.stringify({ order_id: 'ord-101' }),
+        isRead: false,
+        createdAt: new Date(Date.now() - 1000 * 60 * 30),
+      },
+      {
+        id: 'notif-3',
+        userId: 'u-2',
+        type: 'order_status_changed',
+        title: 'Оплата по эскроу поступила',
+        body: 'Вам начислена выплата 175.50 руб. ПМР за выполненный заказ #ord-105.',
+        payload: JSON.stringify({ order_id: 'ord-105' }),
+        isRead: true,
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 6),
+      },
+      {
+        id: 'notif-4',
+        userId: 'u-2',
+        type: 'order_created_nearby',
+        title: 'Новый заказ в Тирасполе: Доставка лекарств',
+        body: 'Срочная доставка из аптеки Вивафарм, бюджет 220 руб. ПМР.',
+        payload: JSON.stringify({ order_id: 'ord-102' }),
+        isRead: false,
+        createdAt: new Date(Date.now() - 1000 * 60 * 50),
+      },
+      {
+        id: 'notif-5',
+        userId: 'u-4',
+        type: 'order_accepted',
+        title: 'Курьер принял ваш заказ',
+        body: 'Максим Шестаков взял в работу ваш заказ в аптеке "Вивафарм".',
+        payload: JSON.stringify({ order_id: 'ord-102' }),
+        isRead: false,
+        createdAt: new Date(Date.now() - 1000 * 60 * 45),
+      },
+      {
+        id: 'notif-6',
+        userId: 'u-4',
+        type: 'order_status_changed',
+        title: 'Чек из аптеки загружен',
+        body: 'Курьер загрузил чек на сумму 204.50 руб. ПМР. Проверьте фото чека.',
+        payload: JSON.stringify({ order_id: 'ord-102' }),
+        isRead: false,
+        createdAt: new Date(Date.now() - 1000 * 60 * 38),
+      },
+    ]);
+
+    // 8. Seed Initial Reviews
+    await db.insert(reviews).values([
+      {
+        id: 'rev-1',
+        orderId: 'ord-105',
+        authorId: 'u-1',
+        targetUserId: 'u-2',
+        rating: 5.0,
+        comment: 'Отличная доставка! Рыбу привез свежую с Зеленого Рынка, упаковал в термопакет, чек приложил до копейки. Очень вежливый парень, рекомендую!',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5),
+      },
+      {
+        id: 'rev-2',
+        orderId: 'ord-103',
+        authorId: 'u-1',
+        targetUserId: 'u-3',
+        rating: 5.0,
+        comment: 'Игорь оперативно приехал в Рыбницу, быстро заменил смеситель и прокладку на кухне. Работой доволен на все 100%!',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 48),
       },
     ]);
 

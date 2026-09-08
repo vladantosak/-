@@ -7,7 +7,9 @@ import { CreateOrderModal } from './components/CreateOrderModal';
 import { OrderDetailModal } from './components/OrderDetailModal';
 import { ProfileModal } from './components/ProfileModal';
 import { AdminPanel } from './components/AdminPanel';
-import { User, Order, OrderCategory } from './types';
+import { NotificationsModal } from './components/NotificationsModal';
+import { EscrowBadge } from './design-system/TrustComponents';
+import { User, Order, OrderCategory, AppNotification } from './types';
 import { api, getAuthToken } from './lib/api';
 import { useWebSocket } from './hooks/useWebSocket';
 import { PMR_CITIES } from './data/pmrCities';
@@ -54,6 +56,9 @@ export default function App() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isNotificationsModalOpen, setIsNotificationsModalOpen] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [repeatOrderData, setRepeatOrderData] = useState<Partial<Order> | null>(null);
   const [clickedMapCoords, setClickedMapCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -99,12 +104,71 @@ export default function App() {
     });
   }, []);
 
+  const handleWsNotification = useCallback((notif: AppNotification) => {
+    setNotifications((prev) => [notif, ...prev.filter((n) => n.id !== notif.id)]);
+  }, []);
+
   const { isConnected, authenticate } = useWebSocket({
     onOrderCreated: handleWsOrderCreated,
     onOrderUpdated: handleWsOrderUpdated,
     onWalletUpdated: handleWsWalletUpdated,
     onVerificationReviewed: handleWsVerificationReviewed,
+    onNotification: handleWsNotification,
   });
+
+  // Notifications handlers
+  const loadNotifications = async () => {
+    try {
+      const data = await api.getNotifications();
+      if (Array.isArray(data)) {
+        setNotifications(data);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleMarkNotificationAsRead = async (id: string) => {
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
+    );
+    try {
+      await api.markNotificationRead(id);
+    } catch (err) {
+      console.warn('Failed to mark notification read', err);
+    }
+  };
+
+  const handleMarkAllNotificationsAsRead = async () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    try {
+      await api.markAllNotificationsRead();
+    } catch (err) {
+      console.warn('Failed to mark all notifications read', err);
+    }
+  };
+
+  const handleSelectOrderById = (orderId: string) => {
+    const found = orders.find((o) => o.id === orderId);
+    if (found) {
+      setSelectedOrder(found);
+      setIsNotificationsModalOpen(false);
+    }
+  };
+
+  const handleRepeatOrder = (order: Order) => {
+    setRepeatOrderData({
+      category: order.category,
+      title: order.title,
+      description: order.description,
+      budget: order.budget,
+      city: order.city,
+      location: order.location,
+      address: order.address,
+    });
+    setClickedMapCoords(null);
+    setIsCreateModalOpen(true);
+  };
 
   // Fetch initial users & orders
   const loadData = async () => {
@@ -136,6 +200,8 @@ export default function App() {
       } catch {
         // Unauthenticated or demo default
       }
+      // Load unread notifications
+      loadNotifications();
     } catch (err) {
       console.warn('Failed to load initial data', err);
     } finally {
@@ -251,6 +317,8 @@ export default function App() {
         onChangeView={(view) => setActiveView(view)}
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onOpenWallet={() => setIsProfileModalOpen(true)}
+        onOpenNotifications={() => setIsNotificationsModalOpen(true)}
+        unreadNotificationsCount={notifications.filter((n) => !n.is_read).length}
         onRefresh={loadData}
         isRefreshing={isRefreshing}
         isConnected={isConnected}
@@ -308,19 +376,25 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Quick Create Order button in header */}
-              <button
-                id="btn-create-order-header"
-                onClick={() => {
-                  setClickedMapCoords(null);
-                  setIsCreateModalOpen(true);
-                }}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1.5"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span className="hidden sm:inline">Создать заказ</span>
-                <span className="sm:hidden">+ Заказ</span>
-              </button>
+              {/* Middle/Right: Trust Badge & Quick Create Order button in header */}
+              <div className="flex items-center gap-3">
+                <div className="hidden md:flex items-center">
+                  <EscrowBadge size="md" />
+                </div>
+
+                <button
+                  id="btn-create-order-header"
+                  onClick={() => {
+                    setClickedMapCoords(null);
+                    setIsCreateModalOpen(true);
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1.5"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span className="hidden sm:inline">Создать поручение</span>
+                  <span className="sm:hidden">+ Заказ</span>
+                </button>
+              </div>
             </div>
 
             {/* Display Screen */}
@@ -352,6 +426,7 @@ export default function App() {
                   currentUser={currentUser}
                   onSelectOrder={(order) => setSelectedOrder(order)}
                   onOpenWallet={() => setIsProfileModalOpen(true)}
+                  onRepeatOrder={handleRepeatOrder}
                 />
               )}
             </div>
@@ -380,6 +455,7 @@ export default function App() {
 
               <button
                 onClick={() => {
+                  setRepeatOrderData(null);
                   setClickedMapCoords(null);
                   setIsCreateModalOpen(true);
                 }}
@@ -419,10 +495,12 @@ export default function App() {
         onClose={() => {
           setIsCreateModalOpen(false);
           setClickedMapCoords(null);
+          setRepeatOrderData(null);
         }}
         currentUser={currentUser}
         selectedCity={selectedCity}
         initialCoords={clickedMapCoords}
+        initialOrder={repeatOrderData}
         onSubmitOrder={handleCreateOrder}
       />
 
@@ -438,6 +516,7 @@ export default function App() {
             );
             setSelectedOrder(updated);
           }}
+          onRepeatOrder={handleRepeatOrder}
         />
       )}
 
@@ -450,6 +529,16 @@ export default function App() {
         onSelectUser={handleSelectUser}
         onUserUpdated={(u) => setCurrentUser(u)}
         isDemoMode={isDemoMode}
+      />
+
+      {/* MODAL 4: Notifications Modal */}
+      <NotificationsModal
+        isOpen={isNotificationsModalOpen}
+        onClose={() => setIsNotificationsModalOpen(false)}
+        notifications={notifications}
+        onMarkAsRead={handleMarkNotificationAsRead}
+        onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+        onSelectOrderById={handleSelectOrderById}
       />
     </div>
   );

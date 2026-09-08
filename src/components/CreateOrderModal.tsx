@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { X, MapPin, Plus, AlertCircle, ShoppingCart, Pill, Wrench, Hammer, Check } from 'lucide-react';
-import { OrderCategory, User } from '../types';
+import React, { useState, useEffect } from 'react';
+import { X, MapPin, Plus, AlertCircle, ShoppingCart, Pill, Wrench, Hammer, Check, RotateCcw } from 'lucide-react';
+import { OrderCategory, User, Order } from '../types';
 import { PMR_CITIES, PMR_CATEGORY_NAMES } from '../data/pmrCities';
 
 interface CreateOrderModalProps {
@@ -9,6 +9,7 @@ interface CreateOrderModalProps {
   currentUser: User;
   selectedCity: string;
   initialCoords?: { lat: number; lng: number } | null;
+  initialOrder?: Partial<Order> | null;
   onSubmitOrder: (data: {
     category: OrderCategory;
     title: string;
@@ -26,6 +27,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   currentUser,
   selectedCity,
   initialCoords,
+  initialOrder,
   onSubmitOrder
 }) => {
   if (!isOpen) return null;
@@ -33,19 +35,31 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const currentCityObj =
     PMR_CITIES.find((c) => c.name === selectedCity) || PMR_CITIES[0];
 
-  const [category, setCategory] = useState<OrderCategory>('products');
+  const [category, setCategory] = useState<OrderCategory>(initialOrder?.category || 'products');
   const [city, setCity] = useState<string>(
-    selectedCity !== 'Все города' ? selectedCity : 'Тирасполь'
+    initialOrder?.city || (selectedCity !== 'Все города' ? selectedCity : 'Тирасполь')
   );
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [budget, setBudget] = useState('150');
-  const [address, setAddress] = useState('');
+  const [title, setTitle] = useState(initialOrder?.title || '');
+  const [description, setDescription] = useState(initialOrder?.description || '');
+  const [budget, setBudget] = useState(initialOrder?.budget ? String(initialOrder.budget) : '150');
+  const [address, setAddress] = useState(initialOrder?.address || '');
   const [coords, setCoords] = useState<{ lat: number; lng: number }>(
-    initialCoords || { lat: currentCityObj.lat, lng: currentCityObj.lng }
+    initialOrder?.location || initialCoords || { lat: currentCityObj.lat, lng: currentCityObj.lng }
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialOrder) {
+      setCategory(initialOrder.category || 'products');
+      setCity(initialOrder.city || (selectedCity !== 'Все города' ? selectedCity : 'Тирасполь'));
+      setTitle(initialOrder.title || '');
+      setDescription(initialOrder.description || '');
+      setBudget(initialOrder.budget ? String(initialOrder.budget) : '150');
+      setAddress(initialOrder.address || '');
+      if (initialOrder.location) setCoords(initialOrder.location);
+    }
+  }, [initialOrder]);
 
   const handleCityChange = (newCityName: string) => {
     setCity(newCityName);
@@ -111,14 +125,14 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
         {/* Modal Title */}
         <div className="mb-5">
-          <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
-            Новое поручение в ПМР
+          <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider flex items-center gap-1">
+            {initialOrder ? <><RotateCcw className="w-3.5 h-3.5" /> Повтор поручения</> : 'Новое поручение в ПМР'}
           </span>
           <h2 className="text-xl font-extrabold text-slate-900 leading-tight">
-            Опубликовать заказ
+            {initialOrder ? 'Повторить заказ' : 'Опубликовать заказ'}
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Свободные курьеры и мастера в вашем городе увидят его на карте
+            {initialOrder ? 'Параметры скопированы из предыдущего заказа. Вы можете скорректировать бюджет или описание.' : 'Свободные курьеры и мастера в вашем городе увидят его на карте'}
           </p>
         </div>
 

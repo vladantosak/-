@@ -117,10 +117,12 @@ async function enrichOrder(orderData: any) {
     client_name: client?.fullName || 'Заказчик',
     client_phone: client?.phone || '',
     client_avatar: client?.avatarUrl || '',
+    client_is_online: client?.isOnline !== false,
     courier_id: orderData.courierId || null,
     courier_name: courier?.fullName || null,
     courier_phone: courier?.phone || null,
     courier_avatar: courier?.avatarUrl || null,
+    courier_is_online: courier ? courier.isOnline !== false : null,
     category: orderData.category,
     title: orderData.title,
     description: orderData.description,
@@ -155,6 +157,27 @@ async function startServer() {
 
   // Initialize WebSocket Server for secure real-time sync
   const wss = new WebSocketServer({ server, path: '/ws' });
+
+  wss.on('error', (err) => {
+    console.error('[WebSocketServer] Error:', err);
+  });
+
+  server.on('error', (err: any) => {
+    console.error('[HTTP Server] Error:', err);
+  });
+
+  process.on('SIGTERM', () => {
+    try {
+      wss.close();
+      server.close();
+    } catch (_) {}
+  });
+  process.on('SIGINT', () => {
+    try {
+      wss.close();
+      server.close();
+    } catch (_) {}
+  });
 
   interface WsClientInfo {
     userId: string;
@@ -500,6 +523,7 @@ async function startServer() {
         role: user.role,
         rating: user.rating,
         is_verified: user.isVerified,
+        is_online: user.isOnline !== false,
         avatar_url: user.avatarUrl,
         balance: user.balance,
         reserved_balance: user.reservedBalance,
@@ -508,6 +532,18 @@ async function startServer() {
     } catch (err) {
       console.error('Fetch me error:', err);
       return res.status(500).json({ error: 'Ошибка при получении профиля' });
+    }
+  });
+
+  // PUT /api/users/status: Toggle online / offline status for courier/master
+  app.put('/api/users/status', requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const isOnline = Boolean(req.body.is_online);
+      await db.update(users).set({ isOnline }).where(eq(users.id, req.user!.id));
+      return res.json({ success: true, is_online: isOnline });
+    } catch (err: any) {
+      console.error('Update online status error:', err);
+      return res.status(500).json({ error: err.message || 'Ошибка обновления статуса' });
     }
   });
 
@@ -524,6 +560,7 @@ async function startServer() {
           role: u.role,
           rating: u.rating,
           is_verified: u.isVerified,
+          is_online: u.isOnline !== false,
           avatar_url: u.avatarUrl,
         }))
       );
@@ -545,6 +582,7 @@ async function startServer() {
           role: u.role,
           rating: u.rating,
           is_verified: u.isVerified,
+          is_online: u.isOnline !== false,
           avatar_url: u.avatarUrl,
           balance: u.balance,
           reserved_balance: u.reservedBalance,
@@ -656,6 +694,25 @@ async function startServer() {
       const enriched = await enrichOrder(createdOrder);
       broadcastOrderEvent(createdOrder, 'order_created', enriched);
 
+      // Notify online couriers/masters in the background
+      (async () => {
+        try {
+          const allPotentialCouriers = await db.select().from(users);
+          for (const u of allPotentialCouriers) {
+            if (u.id !== clientId && u.isOnline !== false) {
+              sendNotification(u.id, {
+                type: 'order_created_nearby',
+                title: `Новое поручение: ${city}`,
+                body: `${title} (бюджет: ${budget} руб. ПМР)`,
+                payload: { order_id: orderId },
+              });
+            }
+          }
+        } catch (e) {
+          console.error('Failed to dispatch new order notifications:', e);
+        }
+      })();
+
       return res.status(201).json(enriched);
     } catch (err: any) {
       console.error('Create order error:', err);
@@ -695,6 +752,14 @@ async function startServer() {
 
       const enriched = await enrichOrder(updatedOrder);
       broadcastOrderEvent(updatedOrder, 'order_updated', enriched);
+
+      // Notify customer that courier accepted their order
+      sendNotification(order.clientId, {
+        type: 'order_accepted',
+        title: 'Исполнитель принял ваш заказ!',
+        body: `${courier?.fullName || 'Исполнитель'} взял в работу заказ «${order.title}».`,
+        payload: { order_id: order.id },
+      });
 
       return res.json(enriched);
     } catch (err: any) {
@@ -744,6 +809,14 @@ async function startServer() {
       const enriched = await enrichOrder(updatedOrder);
       broadcastOrderEvent(updatedOrder, 'order_updated', enriched);
 
+      // Notify client that receipt is uploaded
+      sendNotification(order.clientId, {
+        type: 'order_status_changed',
+        title: 'Чек к заказу загружен',
+        body: `Исполнитель загрузил чек на сумму ${total_sum.toFixed(2)} руб. ПМР. Проверьте фото в приложении.`,
+        payload: { order_id: order.id },
+      });
+
       return res.json(enriched);
     } catch (err: any) {
       console.error('Upload receipt error:', err);
@@ -791,6 +864,23 @@ async function startServer() {
         await db.update(users).set({ rating: newRating }).where(eq(users.id, courier.id));
       }
 
+      // Save textual review to reviews table
+      if (order.courierId) {
+        try {
+          await db.insert(reviews).values({
+            id: `rev-${Date.now()}`,
+            orderId: order.id,
+            authorId: req.user!.id,
+            targetUserId: order.courierId,
+            rating,
+            comment: review || 'Спасибо за качественное выполнение!',
+            createdAt: new Date(),
+          });
+        } catch (revErr) {
+          console.error('Error saving review to table:', revErr);
+        }
+      }
+
       const [updatedOrder] = await db.update(orders)
         .set({
           status: 'completed',
@@ -809,6 +899,14 @@ async function startServer() {
 
       const enriched = await enrichOrder(updatedOrder);
       broadcastOrderEvent(updatedOrder, 'order_updated', enriched);
+
+      // Notify courier
+      sendNotification(order.courierId, {
+        type: 'order_status_changed',
+        title: 'Заказ успешно выполнен!',
+        body: `Заказчик подтвердил выполнение «${order.title}». Вам начислено ${payout} руб. ПМР (${rating} ★).`,
+        payload: { order_id: order.id },
+      });
 
       return res.json(enriched);
     } catch (err: any) {
@@ -848,6 +946,17 @@ async function startServer() {
 
       const enriched = await enrichOrder(updatedOrder);
       broadcastOrderEvent(updatedOrder, 'order_updated', enriched);
+
+      // Notify the other participant
+      const otherUserId = req.user!.id === order.clientId ? order.courierId : order.clientId;
+      if (otherUserId) {
+        sendNotification(otherUserId, {
+          type: 'order_status_changed',
+          title: 'Внимание: по заказу открыт спор',
+          body: `Причина: "${reason}". Администратор Арбитража ПМР проверит материалы.`,
+          payload: { order_id: order.id },
+        });
+      }
 
       return res.json(enriched);
     } catch (err: any) {
@@ -967,6 +1076,17 @@ async function startServer() {
 
       broadcastChatMessage(order, responsePayload);
 
+      // Notify the recipient about the new message
+      const targetUserId = senderId === order.clientId ? order.courierId : order.clientId;
+      if (targetUserId) {
+        sendNotification(targetUserId, {
+          type: 'chat_message',
+          title: `Новое сообщение: ${sender?.fullName || 'Собеседник'}`,
+          body: text.length > 70 ? text.substring(0, 67) + '...' : text,
+          payload: { order_id: order.id },
+        });
+      }
+
       return res.status(201).json(responsePayload);
     } catch (err) {
       console.error('Send message error:', err);
@@ -1065,7 +1185,7 @@ async function startServer() {
 
   // VULNERABILITY FIX 1.3: Enforce authentication on file uploads to prevent DoS/storage spam
   // and record uploader identity in metadata
-  app.post('/api/upload', requireAuth, upload.single('file'), (req: AuthenticatedRequest, res) => {
+  app.post('/api/upload', requireAuth, upload.single('file') as any, (req: AuthenticatedRequest, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'Файл не прикреплен' });
     }
@@ -1267,12 +1387,146 @@ async function startServer() {
   });
 
   // ==========================================
+  // 7. IN-APP NOTIFICATIONS
+  // ==========================================
+
+  app.get('/api/notifications', requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const notifs = await db.select()
+        .from(notifications)
+        .where(eq(notifications.userId, req.user!.id))
+        .orderBy(desc(notifications.createdAt))
+        .limit(50);
+
+      return res.json(
+        notifs.map((n) => ({
+          id: n.id,
+          user_id: n.userId,
+          type: n.type,
+          title: n.title,
+          body: n.body,
+          payload: n.payload ? (typeof n.payload === 'string' ? JSON.parse(n.payload) : n.payload) : {},
+          is_read: n.isRead,
+          created_at: n.createdAt ? (n.createdAt instanceof Date ? n.createdAt.toISOString() : new Date(n.createdAt).toISOString()) : new Date().toISOString(),
+        }))
+      );
+    } catch (err) {
+      console.error('Fetch notifications error:', err);
+      return res.status(500).json({ error: 'Ошибка получения уведомлений' });
+    }
+  });
+
+  app.post('/api/notifications/:id/read', requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      await db.update(notifications)
+        .set({ isRead: true })
+        .where(and(eq(notifications.id, req.params.id), eq(notifications.userId, req.user!.id)));
+      return res.json({ success: true });
+    } catch (err) {
+      return res.status(500).json({ error: 'Ошибка обновления уведомления' });
+    }
+  });
+
+  app.post('/api/notifications/read-all', requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      await db.update(notifications)
+        .set({ isRead: true })
+        .where(eq(notifications.userId, req.user!.id));
+      return res.json({ success: true });
+    } catch (err) {
+      return res.status(500).json({ error: 'Ошибка обновления уведомлений' });
+    }
+  });
+
+  // ==========================================
+  // 8. TEXTUAL USER REVIEWS
+  // ==========================================
+
+  app.get('/api/users/:id/reviews', async (req, res) => {
+    try {
+      const userReviews = await db.select()
+        .from(reviews)
+        .where(eq(reviews.targetUserId, req.params.id))
+        .orderBy(desc(reviews.createdAt));
+
+      const enrichedReviews = await Promise.all(
+        userReviews.map(async (r) => {
+          const [author] = await db.select().from(users).where(eq(users.id, r.authorId));
+          return {
+            id: r.id,
+            order_id: r.orderId,
+            author_id: r.authorId,
+            author_name: author?.fullName || 'Пользователь',
+            author_avatar: author?.avatarUrl || '',
+            target_user_id: r.targetUserId,
+            rating: r.rating,
+            comment: r.comment,
+            created_at: r.createdAt ? (r.createdAt instanceof Date ? r.createdAt.toISOString() : new Date(r.createdAt).toISOString()) : new Date().toISOString(),
+          };
+        })
+      );
+
+      return res.json(enrichedReviews);
+    } catch (err) {
+      console.error('Fetch reviews error:', err);
+      return res.status(500).json({ error: 'Ошибка получения отзывов' });
+    }
+  });
+
+  app.post('/api/orders/:id/review', requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { rating, comment } = req.body;
+      const [order] = await db.select().from(orders).where(eq(orders.id, req.params.id));
+      if (!order) return res.status(404).json({ error: 'Заказ не найден' });
+      if (!order.courierId) return res.status(400).json({ error: 'Исполнитель не назначен' });
+
+      const reviewId = `rev-${Date.now()}`;
+      const createdAt = new Date();
+      await db.insert(reviews).values({
+        id: reviewId,
+        orderId: order.id,
+        authorId: req.user!.id,
+        targetUserId: order.courierId,
+        rating: Number(rating) || 5,
+        comment: comment || '',
+        createdAt,
+      });
+
+      // Update courier rating
+      const [courier] = await db.select().from(users).where(eq(users.id, order.courierId));
+      if (courier) {
+        const newRating = Math.round(((courier.rating * 4 + (Number(rating) || 5)) / 5) * 100) / 100;
+        await db.update(users).set({ rating: newRating }).where(eq(users.id, courier.id));
+      }
+
+      const [author] = await db.select().from(users).where(eq(users.id, req.user!.id));
+      return res.json({
+        id: reviewId,
+        order_id: order.id,
+        author_id: req.user!.id,
+        author_name: author?.fullName || 'Пользователь',
+        author_avatar: author?.avatarUrl || '',
+        target_user_id: order.courierId,
+        rating: Number(rating) || 5,
+        comment: comment || '',
+        created_at: createdAt.toISOString(),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Ошибка сохранения отзыва' });
+    }
+  });
+
+  // ==========================================
   // 9. VITE SPA MIDDLEWARE / PRODUCTION STATIC
   // ==========================================
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ws: false,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
